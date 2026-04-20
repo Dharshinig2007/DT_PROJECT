@@ -1,0 +1,85 @@
+// firestore.rules — Campus Shop
+// Add these rules to your existing firestore.rules file
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function getRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && getRole() == 'admin';
+    }
+
+    function isShopkeeper() {
+      return isSignedIn() && getRole() == 'shopkeeper';
+    }
+
+    function isStudent() {
+      return isSignedIn() && getRole() == 'student';
+    }
+
+    // ── /users ────────────────────────────────────────────────────────────────
+
+    match /users/{uid} {
+      // Users can read/write their own doc
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if isSignedIn() && request.auth.uid == uid;
+
+      // Admins can read and update any user
+      allow read, update: if isAdmin();
+    }
+
+    // ── /shops ────────────────────────────────────────────────────────────────
+
+    match /shops/{shopId} {
+      // Anyone signed in can read shops (for student menu browsing)
+      allow read: if isSignedIn();
+
+      // Shopkeepers can update their own shop (queue toggle, etc.)
+      allow update: if isShopkeeper()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.shopId == shopId;
+
+      // Only admin or Cloud Functions can create/delete shops
+      allow create, delete: if isAdmin();
+    }
+
+    // ── /orders ───────────────────────────────────────────────────────────────
+
+    match /orders/{orderId} {
+      // Students can read their own orders
+      allow read: if isSignedIn()
+        && (resource.data.userId == request.auth.uid || isAdmin());
+
+      // Students can create orders
+      allow create: if isStudent();
+
+      // Shopkeepers can update orders in their shop
+      allow update: if isShopkeeper()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.shopId
+            == resource.data.shopId;
+
+      // Admins can read, update, delete all orders
+      allow read, update, delete: if isAdmin();
+    }
+
+    // ── /config ───────────────────────────────────────────────────────────────
+
+    match /config/{docId} {
+      // All signed-in users can read app config (e.g. maintenanceMode)
+      allow read: if isSignedIn();
+
+      // Only admins can write config
+      allow write: if isAdmin();
+    }
+
+  }
+}
